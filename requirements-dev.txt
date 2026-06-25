@@ -1,0 +1,14 @@
+# Pinned development toolchain (lockfile) for reproducible lint/type/test runs.
+#
+# pyproject.toml [project.optional-dependencies].dev declares the supported
+# version *ranges*; this file pins them to a known-good exact set so a fresh
+# checkout reproduces the same results. The package itself has no runtime
+# dependencies (standard library only), so only the dev tools need locking.
+#
+# Reproducible install:
+#   pip install -e . -r requirements-dev.txt
+pytest==8.4.2
+pytest-cov==7.0.0
+coverage==7.14.1
+mypy==2.1.0
+ruff==0.15.1

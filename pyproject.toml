@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toyproto-lab"
+version = "1.0.0"
+description = "A defensive framed binary protocol over raw TCP sockets"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Princ" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "mypy>=1.10",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+toyproto = "toyproto.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+toyproto = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+packages = ["toyproto"]
+
+[tool.coverage.run]
+omit = ["*/__main__.py"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Pyflakes (F) catches the dead-import/undefined-name class that mypy --strict
+# does not; E/W are pycodestyle errors. Import ordering (I) is intentionally
+# left off to preserve the existing constant-then-enum import grouping.
+select = ["E", "F", "W"]
+
