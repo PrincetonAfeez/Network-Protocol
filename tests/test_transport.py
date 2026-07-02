@@ -1,3 +1,5 @@
+"""Transport: thin socket transport: exact reads, sendall, timeout conversion."""
+
 from __future__ import annotations
 
 import socket
@@ -120,3 +122,87 @@ def test_total_read_deadline_drops_a_slow_dribbling_peer() -> None:
         left.close()
         right.close()
         thread.join(1)
+
+
+class SendTimeoutSocket:
+    def sendall(self, data: bytes) -> None:
+        raise socket.timeout
+
+    def settimeout(self, value: float) -> None:
+        pass
+
+
+def test_write_frame_timeout_is_converted_to_transport_timeout() -> None:
+    from toyproto.transport import write_frame
+
+    with pytest.raises(TransportTimeout, match="writing"):
+        write_frame(SendTimeoutSocket(), b"data")  # type: ignore[arg-type]
+
+
+def test_read_frame_rejects_non_positive_max_frame_seconds() -> None:
+    with pytest.raises(ValueError, match="max_frame_seconds"):
+        read_frame(TimeoutSocket(), KEY, max_frame_seconds=0)  # type: ignore[arg-type]
+
+
+def test_read_exact_deadline_exceeded_without_per_read_timeout() -> None:
+    from toyproto.transport import read_exact
+
+    sock = ChunkSocket(b"abc", [10])
+    with pytest.raises(TransportTimeout, match="deadline"):
+        read_exact(sock, 3, phase="body", deadline=0.0)  # type: ignore[arg-type]
+
+
+def test_read_exact_oserror_becomes_connection_closed() -> None:
+    from toyproto.transport import read_exact
+
+    class BrokenSocket:
+        def settimeout(self, value: float) -> None:
+            pass
+
+        def recv(self, requested: int) -> bytes:
+            raise OSError("broken pipe")
+
+    with pytest.raises(ConnectionClosed, match="socket read failed"):
+        read_exact(BrokenSocket(), 1)  # type: ignore[arg-type]
+
+
+def test_read_exact_peer_close_mid_body_reports_progress() -> None:
+    from toyproto.transport import read_exact
+
+    sock = ChunkSocket(b"ab", [1, 1, 1])
+    with pytest.raises(ConnectionClosed, match="mid-body"):
+        read_exact(sock, 5, phase="body")
+
+
+def test_read_frame_invokes_hook_on_success() -> None:
+    seen: list[str] = []
+
+    def hook(direction: str, data: bytes) -> None:
+        seen.append(direction)
+
+    sock = ChunkSocket(make_frame(3), [100])
+    read_frame(sock, KEY, hook=hook)  # type: ignore[arg-type]
+    assert seen == ["IN"]
+
+
+def test_write_frame_invokes_hook_and_oserror() -> None:
+    from toyproto.transport import write_frame
+
+    seen: list[str] = []
+
+    class GoodSocket:
+        def sendall(self, data: bytes) -> None:
+            pass
+
+        def settimeout(self, value: float) -> None:
+            pass
+
+    write_frame(GoodSocket(), b"abc", hook=lambda direction, data: seen.append(direction))  # type: ignore[arg-type]
+    assert seen == ["OUT"]
+
+    class BadSocket:
+        def sendall(self, data: bytes) -> None:
+            raise OSError("reset")
+
+    with pytest.raises(ConnectionClosed, match="write failed"):
+        write_frame(BadSocket(), b"x")  # type: ignore[arg-type]
