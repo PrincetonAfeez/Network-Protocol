@@ -22,6 +22,7 @@ from .constants import (
     MAX_MALFORMED_FRAMES,
     MAX_FRAME_SIZE,
     MAX_KV_KEYS,
+    PROTOCOL_VERSION,
     SUPPORTED_VERSIONS,
     ErrorCode,
 )
@@ -43,6 +44,11 @@ class _ConnStats:
     errors: int = 0
 
 
+@dataclass
+class _Session:
+    wire_version: int = PROTOCOL_VERSION
+
+
 class ToyProtoServer:
     """Thread-per-connection ToyProto server with a shared in-memory store.
 
@@ -51,6 +57,10 @@ class ToyProtoServer:
     total per-frame read deadline in the transport, and the malformed-frame
     budget. The key-value store is shared across connections and lock-guarded.
     Per-connection frame/byte/error counts are logged when a connection closes.
+
+    ``idle_timeout`` is the seconds a connection may wait for the first byte of
+    a new frame. The deprecated ``timeout`` keyword is an alias for
+    ``idle_timeout``.
     """
 
     def __init__(
@@ -74,6 +84,18 @@ class ToyProtoServer:
             raise ValueError("shared key must not be empty")
         if timeout is not None:
             idle_timeout = timeout
+        if idle_timeout <= 0:
+            raise ValueError("idle_timeout must be positive")
+        if header_timeout <= 0:
+            raise ValueError("header_timeout must be positive")
+        if body_timeout <= 0:
+            raise ValueError("body_timeout must be positive")
+        if max_frame_seconds <= 0:
+            raise ValueError("max_frame_seconds must be positive")
+        if max_frame_size < 1:
+            raise ValueError("max_frame_size must be at least 1")
+        if max_kv_keys is not None and max_kv_keys < 1:
+            raise ValueError("max_kv_keys must be at least 1")
         self.host = host
         self.port = port
         self.key = key
@@ -200,6 +222,7 @@ class ToyProtoServer:
         state: StateMachine,
         message: Message,
         request_id: int,
+        session: _Session,
     ) -> None:
         message_type, body = encode_message(message)
         state.on_send(message_type)
@@ -208,6 +231,7 @@ class ToyProtoServer:
             message_type,
             request_id,
             body,
+            version=session.wire_version,
             max_frame_size=self.max_frame_size,
         )
         LOGGER.debug("send %s request_id=%s", message_type.name, request_id)
@@ -223,9 +247,10 @@ class ToyProtoServer:
         state: StateMachine,
         request_id: int,
         error: ProtocolError,
+        session: _Session,
     ) -> None:
         try:
-            self._send(connection, state, ErrorMessage(error.code, error.reason), request_id)
+            self._send(connection, state, ErrorMessage(error.code, error.reason), request_id, session)
         except (ConnectionClosed, ProtocolError, OSError):
             LOGGER.debug("could not send ERROR frame", exc_info=True)
 
@@ -236,6 +261,7 @@ class ToyProtoServer:
     ) -> None:
         LOGGER.info("accepted %s:%s", *address)
         state = StateMachine(Role.SERVER)
+        session = _Session()
         stats = _ConnStats()
         self._local.stats = stats
         started = time.monotonic()
@@ -266,7 +292,7 @@ class ToyProtoServer:
                         frame.request_id,
                         *address,
                     )
-                    should_close = self._dispatch(connection, state, frame.request_id, message)
+                    should_close = self._dispatch(connection, state, frame.request_id, message, session)
                     if should_close:
                         break
                 except ConnectionClosed:
@@ -282,7 +308,7 @@ class ToyProtoServer:
                     # Nonfatal connection-level error (e.g. malformed body, wrong
                     # state): answer with an ERROR and count it. The connection
                     # closes once these reach max_malformed_frames.
-                    self._send_error(connection, state, current_request_id, exc)
+                    self._send_error(connection, state, current_request_id, exc, session)
                     malformed_frames += 1
                     if malformed_frames >= self.max_malformed_frames:
                         break
@@ -298,6 +324,7 @@ class ToyProtoServer:
                             "internal server error",
                             fatal=False,
                         ),
+                        session,
                     )
                     break
         finally:
@@ -323,6 +350,7 @@ class ToyProtoServer:
         state: StateMachine,
         request_id: int,
         message: Message,
+        session: _Session,
     ) -> bool:
         if isinstance(message, Hello):
             if request_id != CONTROL_REQUEST_ID:
@@ -332,21 +360,24 @@ class ToyProtoServer:
                 error = ProtocolError(
                     ErrorCode.UNSUPPORTED_VERSION,
                     f"no shared version; server supports {SUPPORTED_VERSIONS}",
-                    fatal=True,
+                    fatal=False,
                 )
-                self._send_error(connection, state, CONTROL_REQUEST_ID, error)
+                self._send_error(connection, state, CONTROL_REQUEST_ID, error, session)
                 return True
+            selected = max(compatible)
+            session.wire_version = selected
             self._send(
                 connection,
                 state,
-                HelloAck(max(compatible)),
+                HelloAck(selected),
                 CONTROL_REQUEST_ID,
+                session,
             )
             return False
         if isinstance(message, Ping):
             if request_id != CONTROL_REQUEST_ID:
                 raise ProtocolError(ErrorCode.MALFORMED_BODY, "PING request_id must be 0")
-            self._send(connection, state, Pong(message.nonce), CONTROL_REQUEST_ID)
+            self._send(connection, state, Pong(message.nonce), CONTROL_REQUEST_ID, session)
             return False
         if isinstance(message, Request):
             if request_id == CONTROL_REQUEST_ID:
@@ -354,14 +385,14 @@ class ToyProtoServer:
             try:
                 response = self.application.execute(message)
             except ProtocolError as exc:
-                self._send_error(connection, state, request_id, exc)
+                self._send_error(connection, state, request_id, exc, session)
             else:
-                self._send(connection, state, response, request_id)
+                self._send(connection, state, response, request_id, session)
             return False
         if isinstance(message, Bye):
             if request_id != CONTROL_REQUEST_ID:
                 raise ProtocolError(ErrorCode.MALFORMED_BODY, "BYE request_id must be 0")
-            self._send(connection, state, Bye("goodbye"), CONTROL_REQUEST_ID)
+            self._send(connection, state, Bye("goodbye"), CONTROL_REQUEST_ID, session)
             return True
         # Forward-defensive: the state machine only admits HELLO/PING/REQUEST/BYE
         # to the server, all handled above, so this is unreachable in practice.
