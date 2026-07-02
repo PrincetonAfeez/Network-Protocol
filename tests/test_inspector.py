@@ -1,9 +1,12 @@
+"""Inspector: safe inspection of saved frame bytes."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
+from toyproto.constants import ErrorCode
 from toyproto.hexdump import describe_raw_frame
-from toyproto.inspect import inspect_bytes, inspect_file
+from toyproto.inspect import _message_to_dict, inspect_bytes, inspect_file
 
 FIXTURES = Path(__file__).parent / "fixtures" / "frames"
 KEY = b"fixture-test-key"
@@ -23,6 +26,7 @@ def test_invalid_fixture_reports_error_without_crashing() -> None:
         if path.name.startswith(("bad_", "truncated_", "oversized_", "unknown_")):
             assert report["valid"] is False
             assert "error" in report
+            assert report.get("hmac_valid") is False
 
 
 def test_arbitrary_bytes_report_error() -> None:
@@ -57,4 +61,38 @@ def test_inspect_file_refuses_oversized_file(tmp_path) -> None:
     report = inspect_file(big, max_frame_size=10)
     assert report["valid"] is False
     assert "larger than a single frame" in report["error"]
+
+
+def test_inspect_truncated_frame_with_key_marks_hmac_invalid() -> None:
+    report = inspect_bytes((FIXTURES / "truncated_header.bin").read_bytes(), key=KEY)
+    assert report["valid"] is False
+    assert report["hmac_valid"] is False
+
+
+def test_inspect_missing_file_with_key_marks_hmac_invalid() -> None:
+    report = inspect_file(FIXTURES / "does_not_exist_999.bin", key=KEY)
+    assert report["valid"] is False
+    assert report["hmac_valid"] is False
+    assert "cannot read file" in report["error"]
+
+
+def test_inspect_oversized_file_with_key_marks_hmac_invalid(tmp_path: Path) -> None:
+    big = tmp_path / "huge.bin"
+    big.write_bytes(b"\x00" * 200)
+    report = inspect_file(big, key=KEY, max_frame_size=10)
+    assert report["valid"] is False
+    assert report["hmac_valid"] is False
+    assert "larger than a single frame" in report["error"]
+
+
+def test_message_to_dict_handles_non_dataclass() -> None:
+    assert _message_to_dict(42) == {"value": "42"}
+
+
+def test_message_to_dict_serializes_enums_by_name() -> None:
+    from toyproto.types import ErrorMessage
+
+    report = _message_to_dict(ErrorMessage(ErrorCode.BAD_STATE, "x"))
+    assert report["class"] == "ErrorMessage"
+    assert report["code"] == "BAD_STATE"
 
