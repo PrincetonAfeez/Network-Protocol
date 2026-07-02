@@ -1,5 +1,5 @@
 """HMAC-SHA256 helpers for canonical ToyProto frame bytes."""
-
+ 
 from __future__ import annotations
 
 import hashlib
