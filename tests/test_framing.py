@@ -1,3 +1,5 @@
+"""Framing: encode/decode ToyProto frames."""
+
 from __future__ import annotations
 
 import os
@@ -16,7 +18,7 @@ from toyproto.constants import (
     MessageType,
 )
 from toyproto.errors import ProtocolError
-from toyproto.framing import encode_frame, parse_frame_bytes, parse_header
+from toyproto.framing import _pack_header, encode_frame, parse_frame_bytes, parse_header
 from toyproto.types import Ping
 
 KEY = b"test-key"
@@ -95,6 +97,41 @@ def test_truncated_and_trailing_frames_fail() -> None:
         parse_frame_bytes(raw[:-1], KEY)
     with pytest.raises(ProtocolError):
         parse_frame_bytes(raw + b"x", KEY)
+
+
+def test_encode_frame_rejects_oversized_body() -> None:
+    with pytest.raises(ProtocolError) as exc:
+        encode_frame(KEY, MessageType.PING, 0, b"x" * (MAX_FRAME_SIZE + 1))
+    assert exc.value.code is ErrorCode.FRAME_TOO_LARGE
+
+
+def test_encode_frame_rejects_illegal_flags() -> None:
+    message_type, body = encode_message(Ping(1))
+    with pytest.raises(ProtocolError) as exc:
+        encode_frame(KEY, message_type, 0, body, flags=1)
+    assert exc.value.code is ErrorCode.ILLEGAL_FLAGS
+
+
+def test_parse_header_rejects_wrong_length() -> None:
+    with pytest.raises(ProtocolError, match="header is"):
+        parse_header(b"\x00" * (HEADER_SIZE - 1))
+
+
+def test_pack_header_rejects_invalid_version_field() -> None:
+    with pytest.raises(ProtocolError, match="invalid header field"):
+        _pack_header(256, MessageType.PING, 0, 0, 8, ZERO_HMAC)
+
+
+def test_parse_header_unpack_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import struct
+    from unittest.mock import MagicMock
+
+    mock_struct = MagicMock()
+    mock_struct.size = HEADER_SIZE
+    mock_struct.unpack.side_effect = struct.error("bad unpack")
+    monkeypatch.setattr("toyproto.framing.HEADER_STRUCT", mock_struct)
+    with pytest.raises(ProtocolError, match="cannot unpack header"):
+        parse_header(b"\x00" * HEADER_SIZE)
 
 
 def test_random_garbage_never_leaks_unexpected_exception() -> None:
