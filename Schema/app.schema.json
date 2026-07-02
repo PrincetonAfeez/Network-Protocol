@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/toyproto/app.schema.json",
+  "title": "ToyProto Application Command Schemas",
+  "description": "Reference schemas for ToyProto key-value application commands.",
+  "protocol": "ToyProto",
+  "version": 1,
+  "commands": [
+    {
+      "opcode_hex": "01",
+      "name": "ECHO",
+      "request_args": ["text"],
+      "response_values": ["echoed_text"]
+    },
+    {
+      "opcode_hex": "02",
+      "name": "TIME",
+      "request_args": [],
+      "response_values": ["utc_iso_8601_timestamp"]
+    },
+    {
+      "opcode_hex": "03",
+      "name": "KV_PUT",
+      "request_args": ["key", "value"],
+      "response_values": ["stored"]
+    },
+    {
+      "opcode_hex": "04",
+      "name": "KV_GET",
+      "request_args": ["key"],
+      "response_values": ["value"],
+      "not_found_behavior": "Returns ERROR(NOT_FOUND)."
+    },
+    {
+      "opcode_hex": "05",
+      "name": "KV_DELETE",
+      "request_args": ["key"],
+      "response_values": ["deleted_or_not_found"]
+    }
+  ],
+  "rules": [
+    "REQUEST messages contain exactly the argument count required by the selected command.",
+    "Successful RESPONSE messages contain exactly one string value.",
+    "KV_GET for a missing key returns ERROR(NOT_FOUND).",
+    "KV_DELETE is idempotent and may return either 'deleted' or 'not found'.",
+    "The default key-value store limit is 1024 distinct keys."
+  ]
+}

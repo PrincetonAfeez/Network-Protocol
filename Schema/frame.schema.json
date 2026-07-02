@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/toyproto/frame.schema.json",
+  "title": "ToyProto Frame Schema",
+  "description": "Reference schema for the ToyProto v1 framed binary protocol header.",
+  "protocol": "ToyProto",
+  "version": 1,
+  "byte_order": "network-big-endian",
+  "header_size_bytes": 52,
+  "struct_format": "!4sBBHQI32s",
+  "max_body_length_bytes_default": 1048576,
+  "fields": [
+    {
+      "name": "MAGIC",
+      "offset": 0,
+      "size_bytes": 4,
+      "type": "ascii",
+      "constant": "TP01"
+    },
+    {
+      "name": "VERSION",
+      "offset": 4,
+      "size_bytes": 1,
+      "type": "uint8",
+      "allowed_values": [1]
+    },
+    {
+      "name": "TYPE",
+      "offset": 5,
+      "size_bytes": 1,
+      "type": "uint8",
+      "description": "Message opcode. See messages.schema.json."
+    },
+    {
+      "name": "FLAGS",
+      "offset": 6,
+      "size_bytes": 2,
+      "type": "uint16",
+      "constant": 0,
+      "description": "Reserved. Must be zero in version 1."
+    },
+    {
+      "name": "REQUEST_ID",
+      "offset": 8,
+      "size_bytes": 8,
+      "type": "uint64",
+      "description": "Zero for control messages; nonzero for request/response correlation."
+    },
+    {
+      "name": "BODY_LEN",
+      "offset": 16,
+      "size_bytes": 4,
+      "type": "uint32",
+      "description": "Exact number of bytes in the body. Must be validated before allocation."
+    },
+    {
+      "name": "HMAC_TAG",
+      "offset": 20,
+      "size_bytes": 32,
+      "type": "bytes",
+      "algorithm": "HMAC-SHA256"
+    }
+  ],
+  "authentication": {
+    "algorithm": "HMAC-SHA256",
+    "tag_size_bytes": 32,
+    "canonical_input": [
+      "MAGIC",
+      "VERSION",
+      "TYPE",
+      "FLAGS",
+      "REQUEST_ID",
+      "BODY_LEN",
+      "32 zero bytes",
+      "BODY"
+    ],
+    "notes": [
+      "HMAC authenticates integrity and shared-key authenticity.",
+      "HMAC does not provide encryption or replay protection."
+    ]
+  },
+  "validation_rules": [
+    "Read exactly 52 header bytes before decoding the body.",
+    "Reject BODY_LEN above the configured maximum before reading the body.",
+    "Read exactly BODY_LEN body bytes.",
+    "Verify the HMAC tag before trusting decoded body content.",
+    "Do not allow bytes between adjacent frames."
+  ]
+}

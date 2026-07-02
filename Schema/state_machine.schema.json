@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/toyproto/state_machine.schema.json",
+  "title": "ToyProto State Machine Schema",
+  "description": "Reference state-machine rules for ToyProto clients and servers.",
+  "protocol": "ToyProto",
+  "version": 1,
+  "states": ["NEW", "HANDSHAKING", "READY", "CLOSING", "CLOSED"],
+  "server": {
+    "NEW": {
+      "allowed_incoming": ["HELLO"],
+      "transition": "HANDSHAKING"
+    },
+    "HANDSHAKING": {
+      "allowed_incoming": [],
+      "behavior": "Send HELLO_ACK then transition to READY, or send ERROR then close."
+    },
+    "READY": {
+      "allowed_incoming": ["PING", "REQUEST", "BYE"],
+      "behavior": "Respond to PING and REQUEST; BYE transitions to CLOSING."
+    },
+    "CLOSING": {
+      "allowed_incoming": ["BYE", "EOF"],
+      "transition": "CLOSED"
+    },
+    "CLOSED": {
+      "allowed_incoming": []
+    }
+  },
+  "client": {
+    "NEW": {
+      "allowed_incoming": [],
+      "behavior": "Send HELLO then transition to HANDSHAKING."
+    },
+    "HANDSHAKING": {
+      "allowed_incoming": ["HELLO_ACK", "ERROR"],
+      "behavior": "HELLO_ACK transitions to READY; ERROR closes."
+    },
+    "READY": {
+      "allowed_incoming": ["PONG", "RESPONSE", "ERROR", "BYE"],
+      "behavior": "Correlate responses and handle closure."
+    },
+    "CLOSING": {
+      "allowed_incoming": ["BYE", "EOF"],
+      "transition": "CLOSED"
+    },
+    "CLOSED": {
+      "allowed_incoming": []
+    }
+  },
+  "wrong_state_behavior": "Wrong-state messages produce BAD_STATE when an authenticated ERROR can be returned; the server then closes the connection."
+}

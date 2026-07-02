@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/toyproto/messages.schema.json",
+  "title": "ToyProto Message Schemas",
+  "description": "Reference schemas for ToyProto v1 message opcodes and body encodings.",
+  "protocol": "ToyProto",
+  "version": 1,
+  "primitive_encodings": {
+    "uint8": "Unsigned 8-bit integer.",
+    "uint16": "Unsigned 16-bit big-endian integer.",
+    "uint64": "Unsigned 64-bit big-endian integer.",
+    "string": "uint16 byte length followed by strict UTF-8 bytes.",
+    "list": "Explicit count followed by schema-defined elements."
+  },
+  "messages": [
+    {
+      "opcode_hex": "01",
+      "name": "HELLO",
+      "request_id": 0,
+      "body": [
+        { "name": "count", "type": "uint8" },
+        { "name": "versions", "type": "list<uint8>", "count_field": "count" }
+      ]
+    },
+    {
+      "opcode_hex": "02",
+      "name": "HELLO_ACK",
+      "request_id": 0,
+      "body": [
+        { "name": "selected_version", "type": "uint8", "allowed_values": [1] }
+      ]
+    },
+    {
+      "opcode_hex": "03",
+      "name": "PING",
+      "request_id": 0,
+      "body": [
+        { "name": "nonce", "type": "uint64" }
+      ]
+    },
+    {
+      "opcode_hex": "04",
+      "name": "PONG",
+      "request_id": 0,
+      "body": [
+        { "name": "nonce", "type": "uint64", "description": "Echoed PING nonce." }
+      ]
+    },
+    {
+      "opcode_hex": "05",
+      "name": "REQUEST",
+      "request_id": "nonzero",
+      "body": [
+        { "name": "command", "type": "uint8", "schema_ref": "app.schema.json#/commands" },
+        { "name": "arg_count", "type": "uint8" },
+        { "name": "args", "type": "list<string>", "count_field": "arg_count" }
+      ]
+    },
+    {
+      "opcode_hex": "06",
+      "name": "RESPONSE",
+      "request_id": "matches-request",
+      "body": [
+        { "name": "command", "type": "uint8", "schema_ref": "app.schema.json#/commands" },
+        { "name": "value_count", "type": "uint8" },
+        { "name": "values", "type": "list<string>", "count_field": "value_count" }
+      ]
+    },
+    {
+      "opcode_hex": "07",
+      "name": "ERROR",
+      "request_id": "zero-or-matches-request",
+      "body": [
+        { "name": "error_code", "type": "uint16", "schema_ref": "errors.schema.json#/errors" },
+        { "name": "reason", "type": "string" }
+      ]
+    },
+    {
+      "opcode_hex": "08",
+      "name": "BYE",
+      "request_id": 0,
+      "body": [
+        { "name": "reason", "type": "string" }
+      ]
+    }
+  ],
+  "codec_validation_rules": [
+    "Decode strings as strict UTF-8 only.",
+    "Reject truncation, invalid lengths, unknown enum values, and undeclared trailing body bytes.",
+    "All version 1 message schemas require declared fields even though the frame layer permits zero-length bodies."
+  ]
+}

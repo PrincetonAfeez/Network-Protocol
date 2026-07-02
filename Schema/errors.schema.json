@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/toyproto/errors.schema.json",
+  "title": "ToyProto Error Code Schema",
+  "description": "Reference list of ToyProto v1 protocol and application error codes.",
+  "protocol": "ToyProto",
+  "version": 1,
+  "errors": [
+    { "value_hex": "0001", "name": "BAD_MAGIC", "default_severity": "fatal" },
+    { "value_hex": "0002", "name": "UNSUPPORTED_VERSION", "default_severity": "fatal" },
+    { "value_hex": "0003", "name": "BAD_HMAC", "default_severity": "fatal" },
+    { "value_hex": "0004", "name": "FRAME_TOO_LARGE", "default_severity": "fatal" },
+    { "value_hex": "0005", "name": "MALFORMED_BODY", "default_severity": "nonfatal_codec" },
+    { "value_hex": "0006", "name": "BAD_STATE", "default_severity": "nonfatal_protocol" },
+    { "value_hex": "0007", "name": "UNKNOWN_MESSAGE_TYPE", "default_severity": "fatal" },
+    { "value_hex": "0008", "name": "UNKNOWN_COMMAND", "default_severity": "nonfatal" },
+    { "value_hex": "0009", "name": "TIMEOUT", "default_severity": "fatal" },
+    { "value_hex": "000A", "name": "INTERNAL_ERROR", "default_severity": "implementation_defined" },
+    { "value_hex": "000B", "name": "ILLEGAL_FLAGS", "default_severity": "fatal" },
+    { "value_hex": "000C", "name": "NOT_FOUND", "default_severity": "nonfatal" },
+    { "value_hex": "000D", "name": "TRUNCATED_FRAME", "default_severity": "fatal" },
+    { "value_hex": "000E", "name": "STORE_FULL", "default_severity": "nonfatal" }
+  ],
+  "rules": [
+    "Fatal framing, authentication, version, opcode, flags, length, timeout, and truncation failures close immediately without a reply.",
+    "Nonfatal malformed body and bad-state errors may be answered with ERROR and counted toward the malformed-frame limit.",
+    "Request-level application errors such as NOT_FOUND and STORE_FULL do not close the connection."
+  ]
+}
