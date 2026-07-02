@@ -1,6 +1,9 @@
+"""Cli: command-line interface for ToyProto."""
+
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import threading
 from pathlib import Path
@@ -9,8 +12,9 @@ import pytest
 
 from toyproto import __version__
 from toyproto.cli import _interactive, _key_from_args, build_parser, main
-from toyproto.constants import IDLE_TIMEOUT
-from toyproto.errors import ConnectionClosed
+from toyproto.constants import IDLE_TIMEOUT, ErrorCode
+from toyproto.errors import ConnectionClosed, ProtocolError
+from toyproto.server import ToyProtoServer
 
 from server_helpers import KEY, start_server, stop_server
 
@@ -214,3 +218,248 @@ def test_cli_server_starts_and_stops(monkeypatch) -> None:
     rc = main(["server", "--key", "demo-key"])
     assert rc == 0
     assert started.is_set()
+
+
+def test_cli_time_put_get_delete_against_running_server(capsys) -> None:
+    server, thread = start_server()
+    assert server.bound_port is not None
+    base = ["--host", "127.0.0.1", "--port", str(server.bound_port), "--key", KEY.decode()]
+    try:
+        assert main(["put", "shade", "green", *base]) == 0
+        assert capsys.readouterr().out.strip() == "stored"
+        assert main(["get", "shade", *base]) == 0
+        assert capsys.readouterr().out.strip() == "green"
+        assert main(["time", *base]) == 0
+        assert capsys.readouterr().out.strip().endswith("Z")
+        assert main(["delete", "shade", *base]) == 0
+        assert capsys.readouterr().out.strip() == "deleted"
+    finally:
+        stop_server(server, thread)
+
+
+def test_interactive_exits_after_connection_level_protocol_error(monkeypatch, capsys) -> None:
+    calls: list[str] = []
+
+    def fake_input(prompt: str = "") -> str:
+        calls.append("prompt")
+        return "ping"
+
+    class BadStateClient:
+        def ping(self) -> int:
+            raise ProtocolError(ErrorCode.BAD_STATE, "wrong phase", fatal=False)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _interactive(BadStateClient())  # type: ignore[arg-type]
+    assert len(calls) == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_interactive_continues_after_not_found(monkeypatch, capsys) -> None:
+    calls: list[str] = []
+
+    def fake_input(prompt: str = "") -> str:
+        calls.append("prompt")
+        return "get missing" if len(calls) == 1 else "quit"
+
+    class MissingKeyClient:
+        def request(self, command: object, *args: str) -> object:
+            raise ProtocolError(ErrorCode.NOT_FOUND, "key not found", fatal=False)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _interactive(MissingKeyClient())  # type: ignore[arg-type]
+    assert len(calls) == 2
+
+
+def test_cli_rejects_non_positive_timeout(capsys) -> None:
+    rc = main(["ping", "--timeout", "0", "--key", "demo", "--port", "9000"])
+    assert rc == 2
+    assert "timeout must be positive" in capsys.readouterr().err
+
+
+def test_cli_rejects_non_positive_max_frame_seconds(capsys) -> None:
+    rc = main(["ping", "--max-frame-seconds", "0", "--key", "demo", "--port", "9000"])
+    assert rc == 2
+    assert "max-frame-seconds must be positive" in capsys.readouterr().err
+
+
+def test_cli_inspect_missing_file_with_key_reports_hmac_invalid(capsys) -> None:
+    rc = main(["inspect", str(FIXTURES / "missing.bin"), "--key", FIXTURE_KEY])
+    assert rc == 2
+    report = json.loads(capsys.readouterr().out)
+    assert report["valid"] is False
+    assert report["hmac_valid"] is False
+
+
+def test_whitespace_only_key_is_rejected(monkeypatch) -> None:
+    monkeypatch.delenv("TOYPROTO_KEY", raising=False)
+    with pytest.raises(ValueError, match="provide --key"):
+        _key_from_args(argparse.Namespace(key="   ", key_file=None))
+
+
+def test_cli_rejects_non_positive_max_frame_size(capsys) -> None:
+    rc = main(["ping", "--max-frame-size", "0", "--key", "demo", "--port", "9000"])
+    assert rc == 2
+    assert "max-frame-size must be at least 1" in capsys.readouterr().err
+
+
+def test_cli_rejects_non_positive_idle_timeout(capsys) -> None:
+    rc = main(["server", "--idle-timeout", "0", "--key", "demo"])
+    assert rc == 2
+    assert "idle-timeout must be positive" in capsys.readouterr().err
+
+
+def test_cli_rejects_invalid_server_limits(capsys) -> None:
+    rc = main(["server", "--max-connections", "0", "--key", "demo"])
+    assert rc == 2
+    assert "max-connections must be at least 1" in capsys.readouterr().err
+    rc = main(["server", "--max-kv-keys", "0", "--key", "demo"])
+    assert rc == 2
+    assert "max-kv-keys must be at least 1" in capsys.readouterr().err
+    rc = main(["server", "--max-malformed-frames", "0", "--key", "demo"])
+    assert rc == 2
+    assert "max-malformed-frames must be at least 1" in capsys.readouterr().err
+
+
+def test_cli_server_bind_failure_reports_address_in_use(monkeypatch, capsys) -> None:
+    def fail_bind(self: ToyProtoServer, *, ready: threading.Event | None = None) -> None:
+        raise OSError(errno.EADDRINUSE, "Address already in use")
+
+    monkeypatch.setattr(ToyProtoServer, "serve_forever", fail_bind)
+    rc = main(["server", "--host", "127.0.0.1", "--port", "9000", "--key", "demo"])
+    assert rc == 2
+    assert "address already in use" in capsys.readouterr().err
+
+
+def test_interactive_unknown_command_is_non_fatal(monkeypatch, capsys) -> None:
+    calls = {"n": 0}
+
+    def fake_input(_: str = "") -> str:
+        calls["n"] += 1
+        return "bogus" if calls["n"] == 1 else "quit"
+
+    class StubClient:
+        def ping(self) -> int:
+            return 1
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _interactive(StubClient())  # type: ignore[arg-type]
+    assert "unknown command: bogus" in capsys.readouterr().out
+
+
+def test_interactive_put_without_value_shows_usage(monkeypatch, capsys) -> None:
+    calls = {"n": 0}
+
+    def fake_input(_: str = "") -> str:
+        calls["n"] += 1
+        return "put lonely" if calls["n"] == 1 else "quit"
+
+    class StubClient:
+        def request(self, command: object, *args: str) -> object:
+            raise AssertionError("request should not be called")
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _interactive(StubClient())  # type: ignore[arg-type]
+    assert "usage: put KEY VALUE" in capsys.readouterr().out
+
+
+def test_cli_reports_generic_oserror(capsys, monkeypatch) -> None:
+    def fail_connect(*args: object, **kwargs: object) -> None:
+        raise OSError("network down")
+
+    monkeypatch.setattr("toyproto.client.socket.create_connection", fail_connect)
+    rc = main(["ping", "--key", "demo", "--port", "9000"])
+    assert rc == 2
+    assert "network down" in capsys.readouterr().err
+
+
+def test_cli_frame_hook_via_hexdump(capsys) -> None:
+    server, thread = start_server()
+    assert server.bound_port is not None
+    try:
+        rc = main(
+            [
+                "ping",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(server.bound_port),
+                "--key",
+                "integration-key",
+                "--hexdump",
+            ]
+        )
+        assert rc == 0
+        assert "[OUT]" in capsys.readouterr().err
+    finally:
+        stop_server(server, thread)
+
+
+def test_interactive_continues_after_store_full(monkeypatch, capsys) -> None:
+    calls = {"n": 0}
+
+    def fake_input(_: str = "") -> str:
+        calls["n"] += 1
+        return "get missing" if calls["n"] == 1 else "quit"
+
+    class StubClient:
+        def request(self, command: object, *args: str) -> object:
+            raise ProtocolError(ErrorCode.STORE_FULL, "full", fatal=False)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _interactive(StubClient())  # type: ignore[arg-type]
+    assert "error: STORE_FULL" in capsys.readouterr().err
+
+
+def test_interactive_exits_on_eof(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("builtins.input", lambda _: (_ for _ in ()).throw(EOFError()))
+    _interactive(type("C", (), {"ping": lambda self: 1})())  # type: ignore[arg-type]
+    assert capsys.readouterr().out.endswith("\n")
+
+
+def test_cli_inspect_rejects_invalid_max_frame_size(capsys) -> None:
+    rc = main(["inspect", str(FIXTURES / "valid_hello.bin"), "--max-frame-size", "0"])
+    assert rc == 2
+    assert "max-frame-size must be at least 1" in capsys.readouterr().err
+
+
+def test_interactive_runs_echo_time_get_delete(monkeypatch, capsys) -> None:
+    lines = iter(["echo hi", "time", "get k", "delete k", "quit"])
+
+    class StubClient:
+        def request(self, command: object, *args: str) -> object:
+            from toyproto.types import Response
+
+            if command.name == "ECHO":
+                return Response(command, (args[0],))
+            if command.name == "TIME":
+                return Response(command, ("2026-01-01T00:00:00Z",))
+            if command.name == "KV_GET":
+                return Response(command, ("v",))
+            if command.name == "KV_DELETE":
+                return Response(command, ("deleted",))
+            raise AssertionError(command)
+
+    monkeypatch.setattr("builtins.input", lambda _: next(lines))
+    _interactive(StubClient())  # type: ignore[arg-type]
+    out = capsys.readouterr().out
+    assert "hi" in out
+    assert "2026-01-01T00:00:00Z" in out
+    assert "v" in out
+    assert "deleted" in out
+
+
+def test_interactive_exits_on_toyproto_error(monkeypatch, capsys) -> None:
+    from toyproto.errors import ToyProtoError
+
+    monkeypatch.setattr("builtins.input", lambda _: "ping")
+    _interactive(type("C", (), {"ping": lambda self: (_ for _ in ()).throw(ToyProtoError("boom"))})())  # type: ignore[arg-type]
+    assert "error: boom" in capsys.readouterr().err
+
+
+def test_cli_entrypoint_main_block(monkeypatch) -> None:
+    import toyproto.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "main", lambda argv=None: 0)
+    with pytest.raises(SystemExit) as exc:
+        exec(compile("raise SystemExit(main())", "toyproto.cli", "exec"), cli_module.__dict__)
+    assert exc.value.code == 0
