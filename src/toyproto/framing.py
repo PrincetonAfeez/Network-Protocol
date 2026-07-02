@@ -40,7 +40,7 @@ def _pack_header(
             tag,
         )
     except struct.error as exc:
-        raise ProtocolError(ErrorCode.MALFORMED_BODY, f"invalid header field: {exc}") from exc
+        raise ProtocolError(ErrorCode.TRUNCATED_FRAME, f"invalid header field: {exc}", fatal=True) from exc
 
 
 def canonical_bytes(
