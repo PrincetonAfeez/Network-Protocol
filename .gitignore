@@ -13,7 +13,6 @@ build/
 .env
 *.key
 
-# Local project scope documents
+# Local network-protocol scope documents (not part of the public repo)
 network_protocol_scope.txt
 revised_network_protocol_scope.txt
-
