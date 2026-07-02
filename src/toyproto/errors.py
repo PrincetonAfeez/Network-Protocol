@@ -1,5 +1,5 @@
 """Protocol-specific failures with stable wire error codes."""
-
+ 
 from __future__ import annotations
 
 from .constants import ErrorCode, FATAL_ERROR_CODES
