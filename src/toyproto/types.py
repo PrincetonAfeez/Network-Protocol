@@ -1,5 +1,5 @@
 """Typed frames and message values."""
-
+ 
 from __future__ import annotations
 
 from dataclasses import dataclass
