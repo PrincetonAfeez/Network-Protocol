@@ -80,3 +80,11 @@ FATAL_ERROR_CODES = frozenset(
         ErrorCode.TRUNCATED_FRAME,
     }
 )
+
+# Application-level ERROR codes that do not close the connection.
+APPLICATION_ERROR_CODES = frozenset(
+    {
+        ErrorCode.NOT_FOUND,
+        ErrorCode.STORE_FULL,
+    }
+)
