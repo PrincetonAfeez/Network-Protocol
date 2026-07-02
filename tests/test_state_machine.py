@@ -1,3 +1,5 @@
+"""StateMachine: formal client/server connection state enforcement."""
+
 from __future__ import annotations
 
 import pytest
@@ -78,3 +80,29 @@ def test_closed_endpoint_rejects_all_traffic() -> None:
         state.on_send(MessageType.HELLO)
     with pytest.raises(ProtocolError, match="BAD_STATE"):
         state.on_receive(MessageType.PONG)
+
+
+def test_server_rejects_invalid_send_in_handshaking() -> None:
+    state = StateMachine(Role.SERVER)
+    state.on_receive(MessageType.HELLO)
+    with pytest.raises(ProtocolError, match="cannot send PING"):
+        state.on_send(MessageType.PING)
+
+
+def test_client_rejects_invalid_send_in_new() -> None:
+    state = StateMachine(Role.CLIENT)
+    with pytest.raises(ProtocolError, match="cannot send PING"):
+        state.on_send(MessageType.PING)
+
+
+def test_server_can_send_error_in_handshaking() -> None:
+    state = StateMachine(Role.SERVER)
+    state.on_receive(MessageType.HELLO)
+    state.on_send(MessageType.ERROR)
+
+
+def test_client_ready_accepts_request_send() -> None:
+    state = StateMachine(Role.CLIENT)
+    state.on_send(MessageType.HELLO)
+    state.on_receive(MessageType.HELLO_ACK)
+    state.on_send(MessageType.REQUEST)
