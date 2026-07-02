@@ -1,5 +1,5 @@
 """ToyProto: a small defensive framed protocol over TCP."""
-
+ 
 from importlib.metadata import PackageNotFoundError, version
 
 from .client import ToyProtoClient
