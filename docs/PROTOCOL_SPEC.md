@@ -50,7 +50,9 @@ detects modification; it does not encrypt them or prevent replay.
 - No body may contain undeclared trailing bytes.
 
 Truncation, invalid UTF-8, overrunning lengths, bad enum values, wrong field
-counts, and trailing bytes are malformed.
+counts, and trailing bytes are malformed at the codec layer (`MALFORMED_BODY`).
+Framing-level truncation or trailing bytes use `TRUNCATED_FRAME` instead (see
+section 7).
 
 ## 4. Message opcodes and schemas
 
@@ -94,9 +96,13 @@ connection. Updating an existing key remains allowed at capacity.
 
 The client emits a version-1 frame containing `HELLO` and its supported version
 list. The server chooses the highest mutually supported version and returns
-`HELLO_ACK`. No overlap produces `UNSUPPORTED_VERSION` and closure. A frame
-whose header version cannot itself be parsed by this implementation is rejected
-immediately.
+`HELLO_ACK`. Both endpoints encode subsequent frames using the negotiated version
+in the header `VERSION` byte. No overlap produces `ERROR(UNSUPPORTED_VERSION)`
+with request ID 0, then closure. A frame whose header `VERSION` cannot itself be
+parsed by this implementation is rejected immediately (fatal close with no
+reply). Version 1 implementations accept only header version 1 on the wire;
+future versions must align `read_frame` `supported_versions` with the negotiated
+session version.
 
 ## 6. State machines
 
@@ -160,7 +166,8 @@ rest of a frame already in flight. A separate total per-frame read deadline (30
 seconds) bounds the *aggregate* time to assemble one frame, so a peer dribbling
 bytes just under the per-read timeout is still dropped rather than holding a
 thread open indefinitely. The server also caps concurrent connections (default
-64); connections beyond the cap are refused immediately. The CLI exposes
+64); connections beyond the cap are accepted at the TCP layer then closed
+immediately with no protocol response (the peer sees EOF). The CLI exposes
 `--timeout` for the read timeouts and `--idle-timeout` for the idle policy. When
 using the interactive client, raise `--idle-timeout` on the server if the user may
 pause at the prompt longer than the default idle window. EOF in
