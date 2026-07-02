@@ -1,5 +1,5 @@
 """Human-readable raw frame output."""
-
+ 
 from __future__ import annotations
 
 from .constants import HEADER_SIZE, HEADER_STRUCT
