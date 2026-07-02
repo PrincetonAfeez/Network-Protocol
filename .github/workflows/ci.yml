@@ -26,4 +26,4 @@ jobs:
       - name: Type-check (mypy --strict)
         run: python -m mypy
       - name: Test (pytest, coverage gate)
-        run: pytest --cov=toyproto --cov-report=term-missing --cov-fail-under=85
+        run: pytest --cov=toyproto --cov-report=term-missing --cov-fail-under=95
