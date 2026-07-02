@@ -71,6 +71,8 @@ def read_frame(
     supported_versions: tuple[int, ...] = (PROTOCOL_VERSION,),
     hook: RawFrameHook | None = None,
 ) -> Frame:
+    if max_frame_seconds <= 0:
+        raise ValueError("max_frame_seconds must be positive")
     # Wait for the first byte under the idle timeout: a connection may sit idle
     # between frames, so no total deadline applies yet.
     idle = header_timeout if idle_timeout is None else idle_timeout
@@ -78,7 +80,7 @@ def read_frame(
     # A frame has begun. Bound the total time to assemble it so a peer dribbling
     # bytes just under the per-recv timeout cannot hold the connection (and its
     # thread) open indefinitely -- a defense the per-recv timeouts lack.
-    deadline = time.monotonic() + max_frame_seconds if max_frame_seconds else None
+    deadline = time.monotonic() + max_frame_seconds
     header = first_header_byte + read_exact(
         sock, HEADER_SIZE - 1, phase="header", timeout=header_timeout, deadline=deadline
     )
