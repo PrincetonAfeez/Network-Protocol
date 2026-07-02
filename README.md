@@ -1,6 +1,7 @@
 # ToyProto Lab
 
-[![CI](https://github.com/princ/toyproto-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/princ/toyproto-lab/actions/workflows/ci.yml)
+Academic capstone project — framed binary protocol over TCP (author: Princ;
+add a contact line here before submission if your course requires one).
 
 ToyProto is a CLI-first, framed binary application protocol built directly on
 TCP. It is deliberately small enough to audit byte by byte and hostile enough
@@ -13,16 +14,22 @@ reproducible malformed fixtures, and offline plus loopback tests.
 
 ## For reviewers
 
-Clone, install, and run the full quality gate:
+From a local checkout, install and run the full quality gate:
 
 ```powershell
-git clone https://github.com/princ/toyproto-lab.git
-cd toyproto-lab
 python -m pip install -e . -r requirements-dev.txt
 pytest
 python -m mypy
 ruff check src tests scripts
 ```
+
+The test suite has **221 tests** and enforces **95% line coverage** on
+`src/toyproto/` (~99% at present). Coverage and reporting are configured in
+`pyproject.toml`; CI runs the same gate on Python 3.11–3.13.
+
+CI is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml). After
+publishing to GitHub, add your remote and optionally embed a CI badge:
+`https://github.com/<user>/toyproto-lab/actions/workflows/ci.yml/badge.svg`
 
 Binary frame fixtures under `tests/fixtures/frames/` are committed to the
 repository. If they are missing, `pytest` generates them automatically via
@@ -51,7 +58,11 @@ toyproto client --port 9000 --hexdump
 
 When using the interactive client, raise the server idle timeout if you may
 pause at the prompt for more than 60 seconds (the default), for example
-`toyproto server --idle-timeout 3600`.
+`toyproto server --idle-timeout 3600`. On the client, a single `--timeout`
+value applies to TCP connect and to idle, header, and body read waits; the
+server separates `--timeout` (per-read) from `--idle-timeout` (between frames).
+Client commands also accept `--max-frame-seconds` (default 30) as the total
+budget to assemble one inbound frame.
 
 Each one-shot command creates a new connection. Because the key-value store is
 in memory on the server, values persist across those connections until the
@@ -60,7 +71,7 @@ server exits.
 Run the full quality gate (tests, types, lint):
 
 ```powershell
-pytest                          # offline + loopback test suite
+pytest                          # 221 tests; 95% coverage floor on toyproto
 python -m mypy                  # strict type checking, zero issues
 ruff check src tests scripts    # lint
 ```
@@ -162,8 +173,9 @@ The CLI uses conventional process exit codes (also shown in `toyproto --help`):
 
 For `toyproto inspect`, `valid` means the frame is structurally parseable and
 decodable; it is not an authenticity verdict. Without a key, a structurally
-valid frame exits `0` while `hmac_valid` is `null`. With a key, a bad tag sets
-`hmac_valid` to `false` and the command exits `2`.
+valid frame exits `0` while `hmac_valid` is `null`. With a key, any
+authentication failure (including truncation before verify) sets `hmac_valid` to
+`false` and the command exits `2`.
 
 ## Documentation
 
@@ -175,7 +187,7 @@ valid frame exits `0` while `hmac_valid` is `null`. With a key, a bad tag sets
 
 ToyProto has one protocol version, a pre-shared key, synchronous request/
 response behavior, no encryption, no replay protection, no persistence, IPv4
-only (`AF_INET`), and a simple thread-per-connection server. There is no HTTP
-or web layer because the core learning objective is binary protocol design, not
-presentation.
-
+only (`AF_INET`), and a simple thread-per-connection server. When the server
+reaches its connection cap it closes excess TCP connections immediately with no
+protocol response. There is no HTTP or web layer because the core learning
+objective is binary protocol design, not presentation.
