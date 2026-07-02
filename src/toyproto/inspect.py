@@ -1,5 +1,5 @@
 """Safe, educational inspection of saved frame bytes."""
-
+ 
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
@@ -44,8 +44,9 @@ def inspect_bytes(
     if len(data) < HEADER_SIZE:
         report["error"] = f"truncated header: {len(data)}/{HEADER_SIZE} bytes"
         report["raw_hex"] = data.hex()
+        if key is not None:
+            report["hmac_valid"] = False
         return report
-
     magic, version, raw_type, flags, request_id, body_len, tag = HEADER_STRUCT.unpack(
         data[:HEADER_SIZE]
     )
@@ -89,10 +90,12 @@ def inspect_bytes(
         report["decoded_body"] = _message_to_dict(message)
         report["valid"] = True
     except ProtocolError as exc:
-        if exc.code.name == "BAD_HMAC":
+        if key is not None:
             report["hmac_valid"] = False
         report["error"] = str(exc)
     except (ValueError, TypeError) as exc:
+        if key is not None:
+            report["hmac_valid"] = False
         report["error"] = str(exc)
     return report
 
@@ -111,10 +114,16 @@ def inspect_file(
         with Path(path).open("rb") as handle:
             data = handle.read(cap + 1)
     except OSError as exc:
-        return {"valid": False, "error": f"cannot read file: {exc}"}
+        report: dict[str, Any] = {"valid": False, "error": f"cannot read file: {exc}"}
+        if key is not None:
+            report["hmac_valid"] = False
+        return report
     if len(data) > cap:
-        return {
+        report = {
             "valid": False,
             "error": f"file is larger than a single frame can be ({cap} bytes); refusing to load",
         }
+        if key is not None:
+            report["hmac_valid"] = False
+        return report
     return inspect_bytes(data, key=key, max_frame_size=max_frame_size)
