@@ -1,5 +1,5 @@
 """Pure binary serializer: typed messages <-> deterministic body bytes."""
-
+ 
 from __future__ import annotations
 
 import struct
