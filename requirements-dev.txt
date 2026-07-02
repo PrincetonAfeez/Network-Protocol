@@ -5,6 +5,11 @@
 # checkout reproduces the same results. The package itself has no runtime
 # dependencies (standard library only), so only the dev tools need locking.
 #
+# Quality gate (matches CI):
+#   pytest   — 221 tests, 95% coverage floor on src/toyproto (~99% current)
+#   mypy     — strict mode on src/toyproto
+#   ruff     — src, tests, scripts
+#
 # Reproducible install:
 #   pip install -e . -r requirements-dev.txt
 pytest==8.4.2
