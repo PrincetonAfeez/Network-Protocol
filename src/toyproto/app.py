@@ -1,5 +1,5 @@
 """Tiny in-memory application carried by ToyProto REQUEST messages."""
-
+ 
 from __future__ import annotations
 
 from datetime import datetime, timezone
