@@ -6,17 +6,20 @@ import logging
 import secrets
 import socket
 from contextlib import suppress
+from typing import NoReturn
 
 from .codec import decode_message, encode_message
 from .constants import (
+    APPLICATION_ERROR_CODES,
     CONTROL_REQUEST_ID,
+    MAX_FRAME_SECONDS,
     MAX_FRAME_SIZE,
     PROTOCOL_VERSION,
     SUPPORTED_VERSIONS,
     Command,
     ErrorCode,
 )
-from .errors import ConnectionClosed, ProtocolError
+from .errors import ConnectionClosed, ProtocolError, TransportTimeout
 from .framing import encode_frame
 from .state_machine import ConnectionState, Role, StateMachine
 from .transport import RawFrameHook, read_frame, write_frame
@@ -28,9 +31,12 @@ LOGGER = logging.getLogger("toyproto.client")
 class ToyProtoClient:
     """Synchronous ToyProto client.
 
-    An instance is single-use: after :meth:`close` (or a failed handshake) the
-    connection state is ``CLOSED`` and a fresh instance is required to open a
-    new session. The CLI creates one client per command, which fits this model.
+    An instance is single-use: after :meth:`close` or a failed handshake the
+    connection state is ``CLOSED`` and a fresh instance is required. A TCP
+    connection failure before the handshake completes leaves the instance in
+    ``NEW`` and :meth:`connect` may be retried. After :meth:`close`, a failed
+    handshake, or any non-recoverable protocol/transport error, the instance is
+    ``CLOSED`` and cannot be reused.
     """
 
     def __init__(
@@ -41,15 +47,23 @@ class ToyProtoClient:
         *,
         timeout: float = 5.0,
         max_frame_size: int = MAX_FRAME_SIZE,
+        max_frame_seconds: float = MAX_FRAME_SECONDS,
         frame_hook: RawFrameHook | None = None,
     ) -> None:
         if not key:
             raise ValueError("shared key must not be empty")
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if max_frame_seconds <= 0:
+            raise ValueError("max_frame_seconds must be positive")
+        if max_frame_size < 1:
+            raise ValueError("max_frame_size must be at least 1")
         self.host = host
         self.port = port
         self.key = key
         self.timeout = timeout
         self.max_frame_size = max_frame_size
+        self.max_frame_seconds = max_frame_seconds
         self.frame_hook = frame_hook
         self.sock: socket.socket | None = None
         self.state = StateMachine(Role.CLIENT)
@@ -65,7 +79,7 @@ class ToyProtoClient:
         if self.state.state is ConnectionState.CLOSED:
             raise ConnectionClosed("client is closed; create a new instance")
         if self.sock is not None:
-            return
+            raise ConnectionClosed("client is already connected")
         LOGGER.info("connecting to %s:%s", self.host, self.port)
         try:
             self.sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
@@ -92,6 +106,17 @@ class ToyProtoClient:
             raise ConnectionClosed("client is not connected")
         return self.sock
 
+    def _invalidate(self) -> None:
+        """Drop the socket and mark this single-use client closed."""
+        self._close_socket()
+        self.state.close()
+
+    def _raise_protocol(self, code: ErrorCode, reason: str) -> NoReturn:
+        exc = ProtocolError(code, reason)
+        if exc.code not in APPLICATION_ERROR_CODES:
+            self._invalidate()
+        raise exc
+
     def _send(self, message: Message, request_id: int) -> None:
         message_type, body = encode_message(message)
         self.state.on_send(message_type)
@@ -105,32 +130,44 @@ class ToyProtoClient:
             max_frame_size=self.max_frame_size,
         )
         LOGGER.debug("send %s request_id=%s", message_type.name, request_id)
-        write_frame(self._socket(), raw, hook=self.frame_hook)
+        try:
+            write_frame(self._socket(), raw, hook=self.frame_hook)
+        except (ConnectionClosed, TransportTimeout):
+            self._invalidate()
+            raise
 
     def _receive(self) -> tuple[int, Message]:
-        frame = read_frame(
-            self._socket(),
-            self.key,
-            max_frame_size=self.max_frame_size,
-            header_timeout=self.timeout,
-            body_timeout=self.timeout,
-            idle_timeout=self.timeout,
-            hook=self.frame_hook,
-        )
+        try:
+            frame = read_frame(
+                self._socket(),
+                self.key,
+                max_frame_size=self.max_frame_size,
+                header_timeout=self.timeout,
+                body_timeout=self.timeout,
+                idle_timeout=self.timeout,
+                max_frame_seconds=self.max_frame_seconds,
+                hook=self.frame_hook,
+            )
+        except (ConnectionClosed, TransportTimeout):
+            self._invalidate()
+            raise
         self.state.on_receive(frame.message_type)
         message = decode_message(frame.message_type, frame.body)
         LOGGER.debug("receive %s request_id=%s", frame.message_type.name, frame.request_id)
         if isinstance(message, ErrorMessage):
-            raise ProtocolError(message.code, message.reason)
+            exc = ProtocolError(message.code, message.reason)
+            if exc.code not in APPLICATION_ERROR_CODES:
+                self._invalidate()
+            raise exc
         return frame.request_id, message
 
     def _handshake(self) -> None:
         self._send(Hello(SUPPORTED_VERSIONS), CONTROL_REQUEST_ID)
         request_id, message = self._receive()
         if request_id != CONTROL_REQUEST_ID or not isinstance(message, HelloAck):
-            raise ProtocolError(ErrorCode.BAD_STATE, "expected HELLO_ACK control frame")
+            self._raise_protocol(ErrorCode.BAD_STATE, "expected HELLO_ACK control frame")
         if message.selected_version not in SUPPORTED_VERSIONS:
-            raise ProtocolError(
+            self._raise_protocol(
                 ErrorCode.UNSUPPORTED_VERSION,
                 f"server selected unsupported version {message.selected_version}",
             )
@@ -148,9 +185,9 @@ class ToyProtoClient:
         self._send(Ping(value), CONTROL_REQUEST_ID)
         request_id, message = self._receive()
         if request_id != CONTROL_REQUEST_ID or not isinstance(message, Pong):
-            raise ProtocolError(ErrorCode.BAD_STATE, "expected PONG control frame")
+            self._raise_protocol(ErrorCode.BAD_STATE, "expected PONG control frame")
         if message.nonce != value:
-            raise ProtocolError(ErrorCode.MALFORMED_BODY, "PONG nonce did not match PING")
+            self._raise_protocol(ErrorCode.MALFORMED_BODY, "PONG nonce did not match PING")
         return message.nonce
 
     def request(self, command: Command, *arguments: str) -> Response:
@@ -158,14 +195,17 @@ class ToyProtoClient:
         self._send(Request(command, tuple(arguments)), request_id)
         response_id, message = self._receive()
         if response_id != request_id:
-            raise ProtocolError(
+            self._raise_protocol(
                 ErrorCode.MALFORMED_BODY,
                 f"response request_id {response_id} does not match {request_id}",
             )
         if not isinstance(message, Response):
-            raise ProtocolError(ErrorCode.BAD_STATE, f"expected RESPONSE, got {type(message).__name__}")
+            self._raise_protocol(
+                ErrorCode.BAD_STATE,
+                f"expected RESPONSE, got {type(message).__name__}",
+            )
         if message.command is not command:
-            raise ProtocolError(ErrorCode.MALFORMED_BODY, "response command does not match request")
+            self._raise_protocol(ErrorCode.MALFORMED_BODY, "response command does not match request")
         return message
 
     def close(self, reason: str = "client exit") -> None:
