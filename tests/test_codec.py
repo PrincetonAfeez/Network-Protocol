@@ -1,3 +1,5 @@
+"""Codec: encode/decode ToyProto messages."""
+
 from __future__ import annotations
 
 import os
@@ -57,6 +59,70 @@ def test_malformed_bodies_raise_protocol_error(
 def test_encode_rejects_wrong_command_arity() -> None:
     with pytest.raises(ProtocolError):
         encode_message(Request(Command.TIME, ("unexpected",)))
+
+
+def test_encode_rejects_duplicate_hello_versions() -> None:
+    with pytest.raises(ProtocolError, match="unique"):
+        encode_message(Hello((1, 1)))
+
+
+def test_encode_rejects_empty_hello_versions() -> None:
+    with pytest.raises(ProtocolError, match="unique"):
+        encode_message(Hello(()))
+
+
+def test_encode_rejects_response_with_wrong_value_count() -> None:
+    with pytest.raises(ProtocolError, match="expects 1 value"):
+        encode_message(Response(Command.ECHO, ("a", "b")))
+
+
+def test_decode_rejects_unknown_command_opcode() -> None:
+    body = bytes([0xFF, 0x00])
+    with pytest.raises(ProtocolError) as exc:
+        decode_message(MessageType.REQUEST, body)
+    assert exc.value.code is ErrorCode.UNKNOWN_COMMAND
+
+
+def test_decode_rejects_duplicate_hello_versions() -> None:
+    with pytest.raises(ProtocolError, match="duplicate"):
+        decode_message(MessageType.HELLO, bytes([2, 1, 1]))
+
+
+def test_decode_rejects_empty_hello_version_list() -> None:
+    with pytest.raises(ProtocolError, match="at least one"):
+        decode_message(MessageType.HELLO, b"\x00")
+
+
+def test_message_type_for_rejects_unknown_class() -> None:
+    from toyproto.codec import message_type_for
+
+    with pytest.raises(TypeError, match="unsupported message class"):
+        message_type_for(object())  # type: ignore[arg-type]
+
+
+def test_encode_rejects_oversized_uint_and_string() -> None:
+    with pytest.raises(ProtocolError, match="uint8"):
+        encode_message(HelloAck(256))
+    with pytest.raises(ProtocolError, match="uint64"):
+        encode_message(Ping(-1))
+    huge = "x" * 65536
+    with pytest.raises(ProtocolError, match="65535"):
+        encode_message(Bye(huge))
+
+
+def test_encode_rejects_oversized_string() -> None:
+    with pytest.raises(ProtocolError, match="65535"):
+        encode_message(Bye("x" * 65536))
+
+
+def test_encode_rejects_non_utf8_reason_via_surrogates() -> None:
+    with pytest.raises(ProtocolError, match="UTF-8"):
+        encode_message(Bye("\ud800"))
+
+
+def test_decode_rejects_unknown_error_code() -> None:
+    with pytest.raises(ProtocolError, match="error code"):
+        decode_message(MessageType.ERROR, b"\xff\xff\x00\x00")
 
 
 @pytest.mark.parametrize("message_type", list(MessageType))
