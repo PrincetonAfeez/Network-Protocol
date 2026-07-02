@@ -1,5 +1,5 @@
 """Formal client/server connection state enforcement."""
-
+ 
 from __future__ import annotations
 
 from enum import Enum, auto
