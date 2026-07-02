@@ -1,5 +1,5 @@
 # Architecture Decision Records
-
+ 
 These compact ADRs record the design choices behind ToyProto.
 
 ## ADR-001: CLI first
