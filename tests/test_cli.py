@@ -82,9 +82,9 @@ def test_cli_inspect_valid_fixture_returns_zero(capsys) -> None:
     assert report["message_type"] == "HELLO"
 
 
-def test_cli_inspect_bad_fixture_returns_two(capsys) -> None:
+def test_cli_inspect_bad_fixture_returns_runtime_error(capsys) -> None:
     rc = main(["inspect", str(FIXTURES / "bad_magic.bin"), "--key", FIXTURE_KEY])
-    assert rc == 2
+    assert rc == 3
     report = json.loads(capsys.readouterr().out)
     assert report["valid"] is False
     assert "error" in report
@@ -96,9 +96,9 @@ def test_cli_hexdump_renders_header_fields(capsys) -> None:
     assert "magic:" in capsys.readouterr().out
 
 
-def test_cli_hexdump_missing_file_returns_two(capsys) -> None:
+def test_cli_hexdump_missing_file_returns_runtime_error(capsys) -> None:
     rc = main(["hexdump", str(FIXTURES / "does_not_exist_98765.bin")])
-    assert rc == 2
+    assert rc == 3
     assert "cannot read" in capsys.readouterr().err
 
 
@@ -130,7 +130,7 @@ def test_cli_hexdump_refuses_oversized_file(tmp_path, capsys) -> None:
     big = tmp_path / "huge.bin"
     big.write_bytes(b"\x00" * (HEADER_SIZE + MAX_FRAME_SIZE + 1))
     rc = main(["hexdump", str(big)])
-    assert rc == 2
+    assert rc == 3
     assert "larger than a single frame" in capsys.readouterr().err
 
 
@@ -284,7 +284,7 @@ def test_cli_rejects_non_positive_max_frame_seconds(capsys) -> None:
 
 def test_cli_inspect_missing_file_with_key_reports_hmac_invalid(capsys) -> None:
     rc = main(["inspect", str(FIXTURES / "missing.bin"), "--key", FIXTURE_KEY])
-    assert rc == 2
+    assert rc == 3
     report = json.loads(capsys.readouterr().out)
     assert report["valid"] is False
     assert report["hmac_valid"] is False
@@ -326,7 +326,7 @@ def test_cli_server_bind_failure_reports_address_in_use(monkeypatch, capsys) -> 
 
     monkeypatch.setattr(ToyProtoServer, "serve_forever", fail_bind)
     rc = main(["server", "--host", "127.0.0.1", "--port", "9000", "--key", "demo"])
-    assert rc == 2
+    assert rc == 3
     assert "address already in use" in capsys.readouterr().err
 
 
@@ -362,13 +362,54 @@ def test_interactive_put_without_value_shows_usage(monkeypatch, capsys) -> None:
     assert "usage: put KEY VALUE" in capsys.readouterr().out
 
 
+def test_cli_missing_key_returns_usage_error(capsys, monkeypatch) -> None:
+    monkeypatch.delenv("TOYPROTO_KEY", raising=False)
+    rc = main(["ping", "--port", "9000"])
+    assert rc == 2
+    assert "provide --key" in capsys.readouterr().err
+
+
+def test_cli_connection_refused_returns_runtime_error(capsys, monkeypatch) -> None:
+    monkeypatch.delenv("TOYPROTO_KEY", raising=False)
+
+    def fail_connect(*args: object, **kwargs: object) -> None:
+        raise ConnectionRefusedError("connection refused")
+
+    monkeypatch.setattr("toyproto.client.socket.create_connection", fail_connect)
+    rc = main(["ping", "--key", "demo", "--port", "9000"])
+    assert rc == 3
+    assert "connection refused" in capsys.readouterr().err.lower()
+
+
+def test_cli_protocol_error_returns_runtime_error(capsys, monkeypatch) -> None:
+    import toyproto.cli as cli_module
+
+    class FailingClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> FailingClient:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+        def ping(self) -> int:
+            raise ProtocolError(ErrorCode.BAD_HMAC, "frame authentication failed")
+
+    monkeypatch.setattr(cli_module, "ToyProtoClient", FailingClient)
+    rc = main(["ping", "--key", "demo", "--port", "9000"])
+    assert rc == 3
+    assert "BAD_HMAC" in capsys.readouterr().err
+
+
 def test_cli_reports_generic_oserror(capsys, monkeypatch) -> None:
     def fail_connect(*args: object, **kwargs: object) -> None:
         raise OSError("network down")
 
     monkeypatch.setattr("toyproto.client.socket.create_connection", fail_connect)
     rc = main(["ping", "--key", "demo", "--port", "9000"])
-    assert rc == 2
+    assert rc == 3
     assert "network down" in capsys.readouterr().err
 
 

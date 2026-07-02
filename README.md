@@ -168,14 +168,15 @@ The CLI uses conventional process exit codes (also shown in `toyproto --help`):
 | Code | Meaning |
 |---:|---|
 | `0` | success (`inspect` exits `0` when the frame is structurally valid and decodable) |
-| `2` | usage error (bad arguments) or a runtime/protocol error (connection refused, bad HMAC, timeout, unsupported version, malformed response; `inspect` when `valid` is false) |
+| `2` | usage/configuration error, such as bad arguments or invalid local options |
+| `3` | runtime/protocol/network error, such as connection refused, bad HMAC, timeout, unsupported version, malformed response, or `inspect` when `valid` is false |
 | `130` | interrupted with Ctrl-C |
 
 For `toyproto inspect`, `valid` means the frame is structurally parseable and
 decodable; it is not an authenticity verdict. Without a key, a structurally
 valid frame exits `0` while `hmac_valid` is `null`. With a key, any
 authentication failure (including truncation before verify) sets `hmac_valid` to
-`false` and the command exits `2`.
+`false` and the command exits `3` when the frame is not valid.
 
 ## Documentation
 

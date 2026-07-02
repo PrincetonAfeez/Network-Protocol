@@ -6,7 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Changed
+- CLI exit codes: usage/configuration errors exit `2`; runtime/protocol/network
+  errors exit `3` (Ctrl-C remains `130`).
 
 ## [1.0.3] - 2026-06-17
 

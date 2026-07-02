@@ -95,7 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="toyproto",
         description="ToyProto framed TCP lab",
-        epilog="exit codes: 0 success; 2 usage or runtime/protocol error; 130 interrupted (Ctrl-C)",
+        epilog=(
+            "exit codes: 0 success; 2 usage/configuration error; "
+            "3 runtime/protocol/network error; 130 interrupted (Ctrl-C)"
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -286,7 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             key = _key_from_args(args, required=False)
             report = inspect_file(args.path, key=key, max_frame_size=args.max_frame_size)
             print(json.dumps(report, indent=2, default=str))
-            return 0 if report.get("valid") else 2
+            return 0 if report.get("valid") else 3
 
         if args.command == "hexdump":
             cap = HEADER_SIZE + MAX_FRAME_SIZE
@@ -295,13 +298,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     data = handle.read(cap + 1)
             except OSError as exc:
                 print(f"toyproto: cannot read {args.path}: {exc}", file=sys.stderr)
-                return 2
+                return 3
             if len(data) > cap:
                 print(
                     f"toyproto: {args.path} is larger than a single frame ({cap} bytes)",
                     file=sys.stderr,
                 )
-                return 2
+                return 3
             print(describe_raw_frame(data))
             return 0
 
@@ -330,12 +333,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             host = getattr(args, "host", "127.0.0.1")
             port = getattr(args, "port", "?")
             print(f"toyproto: address already in use ({host}:{port})", file=sys.stderr)
-            return 2
+        else:
+            print(f"toyproto: {exc}", file=sys.stderr)
+        return 3
+    except ValueError as exc:
         print(f"toyproto: {exc}", file=sys.stderr)
         return 2
-    except (ValueError, ToyProtoError) as exc:
+    except ToyProtoError as exc:
         print(f"toyproto: {exc}", file=sys.stderr)
-        return 2
+        return 3
 
 
 if __name__ == "__main__":
